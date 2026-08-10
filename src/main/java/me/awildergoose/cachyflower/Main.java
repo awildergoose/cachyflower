@@ -87,24 +87,28 @@ public class Main {
 
 		included.append(")$");
 
-		MemoryResultSaver out = new MemoryResultSaver();
-		Decompiler decompiler = new Decompiler.Builder()
-				.inputs(inputFile)
-				.output(out)
-				.option(IFernflowerPreferences.INCLUDED_CLASSES, included.toString())
-				.option(IFernflowerPreferences.SKIP_EXTRA_FILES, true)
-				.option(IFernflowerPreferences.THREADS, threads)
-				.build();
-		decompiler.decompile();
+		if (!includedArray.isEmpty()) {
+			MemoryResultSaver out = new MemoryResultSaver();
+			Decompiler decompiler = new Decompiler.Builder()
+					.inputs(inputFile)
+					.output(out)
+					.option(IFernflowerPreferences.INCLUDED_CLASSES, included.toString())
+					.option(IFernflowerPreferences.SKIP_EXTRA_FILES, true)
+					.option(IFernflowerPreferences.THREADS, threads)
+					.build();
+			decompiler.decompile();
 
-		for (Map.Entry<String, String> entry : out.sources.entrySet()) {
-			String path = entry.getKey();
-			String source = entry.getValue();
-			long hash = jarClasses.get(path);
-			byte[] bytes = source.getBytes();
+			out.finish.join();
 
-			Files.write(indexFolder.toPath().resolve(Long.toHexString(hash)), bytes);
-			finalFiles.add(Pair.of(path, bytes));
+			for (Map.Entry<String, String> entry : out.sources.entrySet()) {
+				String path = entry.getKey();
+				String source = entry.getValue();
+				long hash = jarClasses.get(path);
+				byte[] bytes = source.getBytes();
+
+				Files.write(indexFolder.toPath().resolve(Long.toHexString(hash)), bytes);
+				finalFiles.add(Pair.of(path, bytes));
+			}
 		}
 
 		ByteArrayOutputStream baos = new ByteArrayOutputStream();
