@@ -97,8 +97,6 @@ public class Main {
 				.build();
 		decompiler.decompile();
 
-		out.finish.join();
-
 		for (Map.Entry<String, String> entry : out.sources.entrySet()) {
 			String path = entry.getKey();
 			String source = entry.getValue();
@@ -166,6 +164,7 @@ public class Main {
 					continue;
 
 				if (!entry.isDirectory() && name.endsWith(".class")) {
+					hasher.reset();
 					hasher.update(classBytes);
 					jarClasses.put(
 							name.replace(".class", ""),
