@@ -9,10 +9,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.jar.JarOutputStream;
@@ -20,7 +24,7 @@ import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
 
 public class Main {
-	static void main(String[] args) throws IOException {
+	static void main(String[] args) throws IOException, InterruptedException {
 		if (args.length < 4) {
 			System.out.println("Usage: threads cache_folder input.jar output.jar");
 			System.exit(1);
@@ -31,6 +35,8 @@ public class Main {
 		String input = args[2];
 		String output = args[3];
 
+		ExecutorService executorService = Executors.newFixedThreadPool(Integer.parseInt(threads));
+
 		File inputFile = new File(input);
 		Path outputFile = Path.of(output);
 		File indexFolder = new File(cache);
@@ -40,26 +46,41 @@ public class Main {
 		HashMap<String, Long> jarClasses = getJarClasses(inputFile);
 
 		StringBuilder included = new StringBuilder("^(");
-		ArrayList<Pair<String, byte[]>> finalFiles = new ArrayList<>();
-		int hits = 0;
-		int misses = 0;
+		CopyOnWriteArrayList<Pair<String, byte[]>> finalFiles = new CopyOnWriteArrayList<>();
+		CopyOnWriteArrayList<String> includedArray = new CopyOnWriteArrayList<>();
+		AtomicInteger hits = new AtomicInteger();
+		AtomicInteger misses = new AtomicInteger();
 
 		for (Map.Entry<String, Long> entry : jarClasses.entrySet()) {
 			String path = entry.getKey();
 			long hash = entry.getValue();
 			Path indexFilePath = indexFolder.toPath().resolve(Long.toHexString(hash));
 
-			if (!Files.exists(indexFilePath)) {
-				included.append(path).append("|");
-				misses += 1;
-			} else {
-				finalFiles.add(Pair.of(
-						path,
-						Files.readAllBytes(indexFilePath)
-				));
-				hits += 1;
-			}
+			executorService.submit(() -> {
+				if (!Files.exists(indexFilePath)) {
+					misses.addAndGet(1);
+
+					includedArray.add(path + "|");
+				} else {
+					hits.addAndGet(1);
+
+					try {
+						finalFiles.add(Pair.of(
+								path,
+								Files.readAllBytes(indexFilePath)
+						));
+					} catch (IOException e) {
+						throw new RuntimeException(e);
+					}
+				}
+			});
 		}
+
+		executorService.shutdown();
+		if (!executorService.awaitTermination(100, TimeUnit.DAYS))
+			System.out.println("why");
+
+		included.append(String.join("", includedArray));
 
 		if (included.toString().endsWith("|"))
 			included = new StringBuilder(included.substring(0, included.length() - 1));
@@ -103,17 +124,18 @@ public class Main {
 		}
 
 		Files.write(outputFile, baos.toByteArray());
+		executorService.close();
 
 		Duration t = Duration.between(start, Instant.now());
 		System.out.printf(
 				"Decompiled %d classes in %s with %d cache hits and %d cache misses!\n",
-				hits + misses, // lol
+				hits.get() + misses.get(), // lol
 				String.format("%dm %ds %dms",
 				              t.toMinutesPart(),
 				              t.toSecondsPart(),
 				              t.toMillisPart()),
-				hits,
-				misses
+				hits.get(),
+				misses.get()
 		);
 	}
 
