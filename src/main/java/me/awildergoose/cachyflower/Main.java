@@ -28,7 +28,7 @@ import java.util.zip.ZipOutputStream;
 
 public class Main {
 	// if we change decompiler options or anything major, we must up this
-	public static String CACHE_VERSION = "1";
+	public static String CACHE_VERSION = "3";
 
 	static void main(String[] args) throws IOException, InterruptedException {
 		if (args.length < 4) {
@@ -88,9 +88,8 @@ public class Main {
 		Instant start = Instant.now();
 		HashMap<String, Long> jarClasses = getJarClasses(inputFile);
 
-		StringBuilder included = new StringBuilder("^(");
 		CopyOnWriteArrayList<Pair<String, byte[]>> finalFiles = new CopyOnWriteArrayList<>();
-		CopyOnWriteArrayList<String> includedArray = new CopyOnWriteArrayList<>();
+		CopyOnWriteArrayList<String> included = new CopyOnWriteArrayList<>();
 		AtomicInteger hits = new AtomicInteger();
 		AtomicInteger misses = new AtomicInteger();
 
@@ -103,7 +102,7 @@ public class Main {
 				if (contents == null) {
 					misses.addAndGet(1);
 
-					includedArray.add(path + "|");
+					included.add(path);
 				} else {
 					hits.addAndGet(1);
 
@@ -119,14 +118,7 @@ public class Main {
 		if (!executorService.awaitTermination(100, TimeUnit.DAYS))
 			System.out.println("why");
 
-		included.append(String.join("", includedArray));
-
-		if (included.toString().endsWith("|"))
-			included = new StringBuilder(included.substring(0, included.length() - 1));
-
-		included.append(")$");
-
-		if (!includedArray.isEmpty()) {
+		if (!included.isEmpty()) {
 			MemoryResultSaver out = new MemoryResultSaver();
 			Decompiler.Builder decompilerb = new Decompiler.Builder()
 					.inputs(inputFile)
@@ -137,8 +129,13 @@ public class Main {
 			}
 
 			decompilerb
-					.option(IFernflowerPreferences.INCLUDED_CLASSES, included.toString())
+					.allowedPrefixes(included.toArray(new String[0]))
 					.option(IFernflowerPreferences.SKIP_EXTRA_FILES, true)
+					.option(IFernflowerPreferences.DECOMPILE_INNER, true)
+					.option(IFernflowerPreferences.DECOMPILE_GENERIC_SIGNATURES, true)
+					.option(IFernflowerPreferences.BYTECODE_SOURCE_MAPPING, true)
+					.option(IFernflowerPreferences.REMOVE_SYNTHETIC, true)
+					.option(IFernflowerPreferences.INDENT_STRING, "\t")
 					.option(IFernflowerPreferences.THREADS, threads);
 
 			Decompiler decompiler = decompilerb.build();
@@ -230,6 +227,9 @@ public class Main {
 
 				// go away
 				if (name.startsWith("META-INF"))
+					continue;
+				// lambdas/subclasses GO AWAY!!!!!!!!
+				if (name.contains("$"))
 					continue;
 
 				if (!entry.isDirectory() && name.endsWith(".class")) {
