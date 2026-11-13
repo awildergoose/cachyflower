@@ -5,6 +5,7 @@ import org.jetbrains.java.decompiler.main.extern.IFernflowerPreferences;
 import org.jetbrains.java.decompiler.util.Pair;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -26,6 +27,9 @@ import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
 
 public class Main {
+	// if we change decompiler options or anything major, we must up this
+	public static String CACHE_VERSION = "1";
+
 	static void main(String[] args) throws IOException, InterruptedException {
 		if (args.length < 4) {
 			System.out.println("Usage: threads cache.zip input.jar output.jar");
@@ -64,6 +68,21 @@ public class Main {
 					cacheFiles.put(name, bytes);
 				}
 			}
+		}
+
+		if (cacheFiles.containsKey(".version")) {
+			String ver = new String(cacheFiles.get(".version"), StandardCharsets.UTF_8);
+
+			if (!ver.equals(CACHE_VERSION)) {
+				System.err.printf("Cache version has changed, cleaning cache! (old: %s new: %s)\n", ver,
+								  CACHE_VERSION);
+				cacheFiles.clear();
+				cacheFiles.put(".version", CACHE_VERSION.getBytes(StandardCharsets.UTF_8));
+				cacheChanged = true;
+			}
+		} else {
+			cacheFiles.put(".version", CACHE_VERSION.getBytes(StandardCharsets.UTF_8));
+			cacheChanged = true;
 		}
 
 		Instant start = Instant.now();
@@ -211,9 +230,6 @@ public class Main {
 
 				// go away
 				if (name.startsWith("META-INF"))
-					continue;
-				// lambdas/subclasses GO AWAY!!!!!!!!
-				if (name.contains("$"))
 					continue;
 
 				if (!entry.isDirectory() && name.endsWith(".class")) {
