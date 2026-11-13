@@ -8,10 +8,13 @@ version = "1.0-SNAPSHOT"
 
 repositories {
     mavenCentral()
+    maven {
+        url "https://repo.cleanroommc.com/releases"
+    }
 }
 
 dependencies {
-    implementation 'org.vineflower:vineflower:1.12.0'
+    implementation 'com.cleanroommc:cleanflower:1.0.0'
 }
 
 shadowJar {

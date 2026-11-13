@@ -22,11 +22,13 @@ import java.util.jar.JarFile;
 import java.util.jar.JarOutputStream;
 import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
+import java.util.zip.ZipOutputStream;
 
 public class Main {
 	static void main(String[] args) throws IOException, InterruptedException {
 		if (args.length < 4) {
-			System.out.println("Usage: threads cache_folder input.jar output.jar");
+			System.out.println("Usage: threads cache.zip input.jar output.jar");
 			System.exit(1);
 		}
 
@@ -38,9 +40,31 @@ public class Main {
 		ExecutorService executorService = Executors.newFixedThreadPool(Integer.parseInt(threads));
 
 		File inputFile = new File(input);
-		Path outputFile = Path.of(output);
-		File indexFolder = new File(cache);
-		boolean _ = indexFolder.mkdirs();
+		Path outputFilePath = Path.of(output);
+		Path cacheFilePath = Path.of(cache);
+
+		boolean cacheChanged = false;
+		File cacheFile = new File(cache);
+		HashMap<String, byte[]> cacheFiles = new HashMap<>();
+
+		if (cacheFile.exists()) {
+			try (ZipFile cacheZip = new ZipFile(cacheFile)) {
+				Enumeration<? extends ZipEntry> entries = cacheZip.entries();
+
+				while (entries.hasMoreElements()) {
+					ZipEntry entry = entries.nextElement();
+
+					byte[] bytes;
+
+					try (InputStream is = cacheZip.getInputStream(entry)) {
+						bytes = is.readAllBytes();
+					}
+
+					String name = entry.getName();
+					cacheFiles.put(name, bytes);
+				}
+			}
+		}
 
 		Instant start = Instant.now();
 		HashMap<String, Long> jarClasses = getJarClasses(inputFile);
@@ -54,24 +78,20 @@ public class Main {
 		for (Map.Entry<String, Long> entry : jarClasses.entrySet()) {
 			String path = entry.getKey();
 			long hash = entry.getValue();
-			Path indexFilePath = indexFolder.toPath().resolve(Long.toHexString(hash));
+			byte[] contents = cacheFiles.get(Long.toHexString(hash));
 
 			executorService.submit(() -> {
-				if (!Files.exists(indexFilePath)) {
+				if (contents == null) {
 					misses.addAndGet(1);
 
 					includedArray.add(path + "|");
 				} else {
 					hits.addAndGet(1);
 
-					try {
-						finalFiles.add(Pair.of(
-								path,
-								Files.readAllBytes(indexFilePath)
-						));
-					} catch (IOException e) {
-						throw new RuntimeException(e);
-					}
+					finalFiles.add(Pair.of(
+							path,
+							contents
+					));
 				}
 			});
 		}
@@ -89,13 +109,20 @@ public class Main {
 
 		if (!includedArray.isEmpty()) {
 			MemoryResultSaver out = new MemoryResultSaver();
-			Decompiler decompiler = new Decompiler.Builder()
+			Decompiler.Builder decompilerb = new Decompiler.Builder()
 					.inputs(inputFile)
-					.output(out)
+					.output(out);
+
+			for (var option : IFernflowerPreferences.getDefaults().entrySet()) {
+				decompilerb.option(option.getKey(), option.getValue());
+			}
+
+			decompilerb
 					.option(IFernflowerPreferences.INCLUDED_CLASSES, included.toString())
 					.option(IFernflowerPreferences.SKIP_EXTRA_FILES, true)
-					.option(IFernflowerPreferences.THREADS, threads)
-					.build();
+					.option(IFernflowerPreferences.THREADS, threads);
+
+			Decompiler decompiler = decompilerb.build();
 			decompiler.decompile();
 
 			out.finish.join();
@@ -106,11 +133,13 @@ public class Main {
 				long hash = jarClasses.get(path);
 				byte[] bytes = source.getBytes();
 
-				Files.write(indexFolder.toPath().resolve(Long.toHexString(hash)), bytes);
+				cacheFiles.put(Long.toHexString(hash), bytes);
 				finalFiles.add(Pair.of(path, bytes));
+				cacheChanged = true;
 			}
 		}
 
+		// write the final jar
 		ByteArrayOutputStream baos = new ByteArrayOutputStream();
 
 		try (JarOutputStream jar = new JarOutputStream(baos)) {
@@ -125,7 +154,27 @@ public class Main {
 			jar.finish();
 		}
 
-		Files.write(outputFile, baos.toByteArray());
+		Files.write(outputFilePath, baos.toByteArray());
+
+		// also write the new cache
+		if (cacheChanged) {
+			baos = new ByteArrayOutputStream();
+
+			try (ZipOutputStream zip = new ZipOutputStream(baos)) {
+				for (Map.Entry<String, byte[]> pair : cacheFiles.entrySet()) {
+					String path = pair.getKey();
+					byte[] data = pair.getValue();
+
+					zip.putNextEntry(new ZipEntry(path));
+					zip.write(data);
+				}
+
+				zip.finish();
+			}
+
+			Files.write(cacheFilePath, baos.toByteArray());
+		}
+
 		executorService.close();
 
 		Duration t = Duration.between(start, Instant.now());
